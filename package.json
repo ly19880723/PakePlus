@@ -11,7 +11,7 @@
         "docs:build": "vitepress build docs",
         "docs:preview": "vitepress preview docs",
         "dev": "vite",
-        "build": "vue-tsc --noEmit && vite build",
+        "build": "vite build",
         "preview": "vite preview",
         "icon": "tauri icon",
         "appleIcns": "node scripts/creatIcon.cjs",

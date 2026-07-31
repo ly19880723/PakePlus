@@ -34,21 +34,16 @@ on:
                 type: boolean
                 default: false
 
-permissions:
-    contents: write
-
 jobs:
     build_windows_x86_64:
         if: ${{ github.event.inputs.build_windows_x86_64 == 'true' }}
         runs-on: windows-latest
         steps:
             - uses: actions/checkout@v4
-            - uses: pnpm/action-setup@v4
-              with:
-                  version: 10
             - uses: actions/setup-node@v4
               with:
-                  node-version: 22.14.0
+                  node-version: 22
+            - run: corepack enable
             - uses: dtolnay/rust-toolchain@stable
             - run: pnpm install
             - run: Remove-Item -Recurse -Force ./dist -ErrorAction SilentlyContinue
@@ -91,19 +86,10 @@ jobs:
                 }
                 Write-Host "Applied config: $name"
               shell: pwsh
-            - run: |
-                $env:TAURI_SIGNING_PRIVATE_KEY = ${{ secrets.TAURI_PRIVATE_KEY }}
-                $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ${{ secrets.TAURI_KEY_PASSWORD }}
-                if (Test-Path "$env:TAURI_SIGNING_PRIVATE_KEY") {
-                    Write-Host "Using signed build"
-                    pnpm tauri build
-                } else {
-                    Write-Host "Using unsigned dev build"
-                    pnpm tauri build --debug
-                }
+            - run: pnpm tauri build --debug
               shell: pwsh
               working-directory: src-tauri
-            - uses: actions/upload-artifact@v3
+            - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-windows-x86_64
                   path: |
@@ -115,12 +101,10 @@ jobs:
         runs-on: windows-latest
         steps:
             - uses: actions/checkout@v4
-            - uses: pnpm/action-setup@v4
-              with:
-                  version: 10
             - uses: actions/setup-node@v4
               with:
-                  node-version: 22.14.0
+                  node-version: 22
+            - run: corepack enable
             - uses: dtolnay/rust-toolchain@stable
             - run: pnpm install
             - run: rustup target add aarch64-pc-windows-msvc
@@ -130,7 +114,7 @@ jobs:
             - run: pnpm tauri build --debug --target aarch64-pc-windows-msvc
               shell: pwsh
               working-directory: src-tauri
-            - uses: actions/upload-artifact@v3
+            - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-windows-aarch64
                   path: |
@@ -142,12 +126,10 @@ jobs:
         runs-on: macos-latest
         steps:
             - uses: actions/checkout@v4
-            - uses: pnpm/action-setup@v4
-              with:
-                  version: 10
             - uses: actions/setup-node@v4
               with:
-                  node-version: 22.14.0
+                  node-version: 22
+            - run: corepack enable
             - uses: dtolnay/rust-toolchain@stable
               with:
                   targets: aarch64-apple-darwin
@@ -156,7 +138,7 @@ jobs:
             - run: pnpm build
             - run: pnpm tauri build --debug --target aarch64-apple-darwin
               working-directory: src-tauri
-            - uses: actions/upload-artifact@v3
+            - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-macos-aarch64
                   path: |
@@ -168,12 +150,10 @@ jobs:
         runs-on: macos-latest
         steps:
             - uses: actions/checkout@v4
-            - uses: pnpm/action-setup@v4
-              with:
-                  version: 10
             - uses: actions/setup-node@v4
               with:
-                  node-version: 22.14.0
+                  node-version: 22
+            - run: corepack enable
             - uses: dtolnay/rust-toolchain@stable
               with:
                   targets: x86_64-apple-darwin
@@ -182,7 +162,7 @@ jobs:
             - run: pnpm build
             - run: pnpm tauri build --debug --target x86_64-apple-darwin
               working-directory: src-tauri
-            - uses: actions/upload-artifact@v3
+            - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-macos-x86_64
                   path: |
@@ -194,12 +174,10 @@ jobs:
         runs-on: ubuntu-22.04
         steps:
             - uses: actions/checkout@v4
-            - uses: pnpm/action-setup@v4
-              with:
-                  version: 10
             - uses: actions/setup-node@v4
               with:
-                  node-version: 22.14.0
+                  node-version: 22
+            - run: corepack enable
             - uses: dtolnay/rust-toolchain@stable
             - run: pnpm install
             - name: Install deps
@@ -210,7 +188,7 @@ jobs:
             - run: pnpm build
             - run: pnpm tauri build --debug
               working-directory: src-tauri
-            - uses: actions/upload-artifact@v3
+            - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-linux-x86_64
                   path: |
@@ -222,12 +200,10 @@ jobs:
         runs-on: ubuntu-22.04
         steps:
             - uses: actions/checkout@v4
-            - uses: pnpm/action-setup@v4
-              with:
-                  version: 10
             - uses: actions/setup-node@v4
               with:
-                  node-version: 22.14.0
+                  node-version: 22
+            - run: corepack enable
             - uses: dtolnay/rust-toolchain@stable
             - run: pnpm install
             - name: Install deps
@@ -239,7 +215,7 @@ jobs:
             - run: pnpm build
             - run: pnpm tauri build --debug --target aarch64-unknown-linux-gnu
               working-directory: src-tauri
-            - uses: actions/upload-artifact@v3
+            - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-linux-aarch64
                   path: |
