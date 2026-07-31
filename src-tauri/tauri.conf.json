@@ -5,7 +5,14 @@
     "identifier": "com.pakeplus.pacbao",
     "build": {
         "devUrl": "http://localhost:1420",
-        "frontendDist": "../dist"
+        "frontendDist": "../dist",
+        "beforeDevCommand": "pnpm dev",
+        "beforeBuildCommand": "pnpm build"
+    },
+    "bundle": {
+        "resources": [
+            "data/**"
+        ]
     },
     "app": {
         "security": {

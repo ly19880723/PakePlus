@@ -20,9 +20,13 @@
         "rm:cache": "rm -f ~/.cargo/.package-cache"
     },
     "dependencies": {
+        "@codemirror/commands": "^6.10.4",
         "@codemirror/lang-javascript": "^6.2.3",
         "@codemirror/lang-json": "^6.0.1",
+        "@codemirror/language": "^6.12.4",
+        "@codemirror/state": "^6.7.1",
         "@codemirror/theme-one-dark": "^6.1.2",
+        "@codemirror/view": "^6.43.7",
         "@element-plus/icons-vue": "^2.3.1",
         "@tauri-apps/api": "^2.5.0",
         "@tauri-apps/plugin-clipboard-manager": "^2.2.0",
@@ -32,10 +36,10 @@
         "@tauri-apps/plugin-notification": "^2.2.2",
         "@tauri-apps/plugin-opener": "^2",
         "@tauri-apps/plugin-os": "^2.2.0",
-        "@tauri-apps/plugin-process": "~2.2.1",
+        "@tauri-apps/plugin-process": "^2.3.1",
         "@tauri-apps/plugin-shell": "^2.2.0",
         "@tauri-apps/plugin-store": "^2.2.0",
-        "@tauri-apps/plugin-updater": "^2.7.1",
+        "@tauri-apps/plugin-updater": "^2.10.1",
         "@tauri-apps/plugin-window-state": "^2.2.1",
         "axios": "^1.7.9",
         "codemirror": "^6.0.1",
@@ -68,5 +72,6 @@
         "vite": "^6.0.3",
         "vitepress": "^1.6.4",
         "vue-tsc": "^2.1.10"
-    }
+    },
+    "packageManager": "pnpm@11.18.0+sha512.33d83c77da82f49fba836925c6f1b841181ec3132b670639bd012f7075f5c7cf634c5f870147c19aae7478fac01df09d8892e880454896edd23ee9b33757563c"
 }

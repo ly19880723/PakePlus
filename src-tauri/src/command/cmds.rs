@@ -17,8 +17,9 @@ use std::time::Instant;
 use tauri::WindowEvent;
 use tauri::{
     path::BaseDirectory, utils::config::WindowConfig, AppHandle, Emitter, LogicalSize, Manager,
+    Url, WebviewUrl,
 };
-use tauri_plugin_http::reqwest::Client;
+use ureq;
 use walkdir::WalkDir;
 use warp::Filter;
 use zip::write::FileOptions;
@@ -111,6 +112,9 @@ pub async fn preview_from_config(
     icon_base64: String,
 ) {
     let window_label = "PreView";
+    println!("[PakePlus] preview_from_config: url={}, title={}, size={}x{}", 
+             config.url, config.title, config.width, config.height);
+    
     if let Some(existing_window) = handle.get_webview_window(window_label) {
         if resize {
             let new_size = LogicalSize::new(config.width, config.height);
@@ -135,12 +139,42 @@ pub async fn preview_from_config(
     // custom js
     contents += js_content.as_str();
     if !resize {
-        let pre_window = tauri::WebviewWindowBuilder::from_config(&handle, &config)
-            .unwrap()
-            .title(config.title)
+        // 修复：将被错误反序列化为 AssetUrl 的外部URL转换为 External
+        let mut url = config.url.clone();
+        if let WebviewUrl::App(ref path) = url {
+            let url_str = path.to_string_lossy().to_string();
+            if url_str.starts_with("http://") || url_str.starts_with("https://") {
+                if let Ok(external_url) = Url::parse(&url_str) {
+                    println!("[PakePlus] preview_from_config: URL修复 AssetUrl -> External({})", url_str);
+                    url = WebviewUrl::External(external_url);
+                }
+            }
+        }
+        let title = config.title.clone();
+        let width = config.width;
+        let height = config.height;
+        
+        println!("[PakePlus] Creating preview window with url: {:?}", url);
+        
+        let mut builder = tauri::WebviewWindowBuilder::new(&handle, window_label, url)
+            .title(title)
             .initialization_script_for_all_frames(contents.as_str())
-            .build()
-            .unwrap();
+            .inner_size(width, height)
+            .resizable(config.resizable);
+        
+        if config.center {
+            builder = builder.center();
+        }
+        
+        if let Some(ref ua) = config.user_agent {
+            if !ua.is_empty() {
+                builder = builder.user_agent(ua);
+            }
+        }
+        
+        let pre_window = builder.build().unwrap();
+        println!("[PakePlus] Preview window created successfully");
+        
         if icon_base64.len() > 0 {
             use tauri::image::Image;
             let icon_decode =
@@ -321,8 +355,17 @@ pub async fn download_file(
     save_path: String,
     file_id: String,
 ) -> Result<(), String> {
-    let client = Client::new();
-    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    // 用 ureq 同步下载（简单 GET 请求，ureq 足够用）
+    let resp = ureq::get(&url)
+        .call()
+        .map_err(|e| e.to_string())?;
+    // 从 header 获取 content-length
+    let total_size: u64 = resp
+        .header("content-length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let mut reader = resp.into_reader();
+    
     // if save path is empty
     let mut save_path = save_path;
     let file_name = url.split('/').last().unwrap();
@@ -344,19 +387,27 @@ pub async fn download_file(
             i += 1;
         }
     }
-    let total_size = resp.content_length();
-    let mut resp = resp;
+    // 确保父目录存在
+    if let Some(parent) = Path::new(&save_path).parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| format!("创建下载目录失败: {}", e))?;
+        }
+    }
+    
     let mut file = File::create(&save_path).map_err(|e| e.to_string())?;
     let mut downloaded: u64 = 0;
-    while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
-        downloaded += chunk.len() as u64;
+    let mut buffer = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 { break; }
+        file.write_all(&buffer[..n]).map_err(|e| e.to_string())?;
+        downloaded += n as u64;
         app.emit(
             "download_progress",
             DownloadProgress {
                 file_id: file_id.clone(),
                 downloaded,
-                total: total_size.unwrap_or(0),
+                total: total_size,
             },
         )
         .map_err(|e| e.to_string())?;
@@ -519,43 +570,239 @@ pub async fn windows_build(
     config: String,
     custom_js: String,
     html_path: String,
-    script_path: String,
+    _script_path: String,
+    base64_png: String,
 ) -> Result<(), String> {
+    println!("[PakePlus] windows_build: base_dir={}, exe_name={}", base_dir, exe_name);
+
     let base_path = Path::new(base_dir).join(exe_name);
     if !base_path.exists() {
-        fs::create_dir_all(&base_path).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&base_path).map_err(|e| format!("创建目标目录失败: {}", e))?;
     }
     let config_dir = base_path.join("config").join("inject");
     if !config_dir.exists() {
-        fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&config_dir).map_err(|e| format!("创建配置目录失败: {}", e))?;
     }
     let www_dir = base_path.join("config").join("www");
     if !html_path.is_empty() {
         let html_dir = Path::new(&html_path);
         if html_dir.exists() {
-            copy_dir(html_dir, &www_dir).expect("copy html dir failed");
+            copy_dir(html_dir, &www_dir).map_err(|e| format!("复制静态文件失败: {}", e))?;
         }
     }
     let custom_js_path = config_dir.join("custom.js");
-    fs::write(custom_js_path, custom_js).map_err(|e| e.to_string())?;
+    fs::write(&custom_js_path, custom_js).map_err(|e| format!("写入 custom.js 失败: {}", e))?;
     let man_path = base_path.join("config").join("man");
-    fs::write(man_path, config).map_err(|e| e.to_string())?;
-    let www_dir = base_path.join("config").join("www");
-    if !html_path.is_empty() {
-        let html_dir = Path::new(&html_path);
-        if html_dir.exists() {
-            copy_dir(html_dir, &www_dir).expect("copy html dir failed");
-        }
+    fs::write(&man_path, config).map_err(|e| format!("写入 man 配置失败: {}", e))?;
+
+    // 复制 PakePlus.exe 并重命名为目标 exe 名
+    let exe_path = env::current_exe().map_err(|e| format!("获取当前 exe 路径失败: {}", e))?;
+    let target_exe = base_path.join(format!("{}.exe", exe_name));
+    fs::copy(&exe_path, &target_exe).map_err(|e| format!("复制主程序失败: {}", e))?;
+    println!("[PakePlus] 主程序已复制到: {:?}", target_exe);
+
+    // ---- 修改PE头子系统=WINDOWS (2)，消灭cmd黑窗口 ----
+    if let Err(e) = set_pe_subsystem_windows(&target_exe) {
+        println!("[PakePlus] 警告: 修改子系统失败（不影响使用）: {}", e);
+    } else {
+        println!("[PakePlus] 已切换 PE 子系统为 Windows（无cmd黑窗口）");
     }
-    let exe_path = env::current_exe().unwrap();
+
+    // ---- Resource Hacker 替换 ICON 和 VERSIONINFO ----
+    // 先把 rh.exe 复制到输出目录，这样后续运行 RH 时能找到它
     let exe_dir = exe_path.parent().unwrap();
-    let rhexe_dir = exe_dir.join("data").join("rh.exe");
-    let rh_command = format!(
-        "& \"{}\" -script \"{}\"",
-        rhexe_dir.to_str().unwrap(),
-        script_path
-    );
-    run_command(rh_command).await?;
+    let rhexe_src = exe_dir.join("data").join("rh.exe");
+    let rh_local = base_path.join("rh.exe");
+    if rhexe_src.exists() {
+        let _ = fs::copy(&rhexe_src, &rh_local);
+        println!("[PakePlus] rh.exe 已复制到输出目录");
+    }
+
+    if rh_local.exists() {
+        let do_icon = !base64_png.is_empty();
+
+        // 生成 ICO 临时文件
+        let icon_ico_path = base_path.join("app.ico");
+        let mut icon_ok = false;
+        if do_icon {
+            match generate_ico_from_png(&base64_png, &icon_ico_path) {
+                Ok(_) => {
+                    println!("[PakePlus] 图标ICO已生成: {:?}", icon_ico_path);
+                    icon_ok = true;
+                }
+                Err(e) => println!("[PakePlus] 警告: 图标生成失败: {}", e),
+            }
+        }
+
+        // 生成 VERSINFO 临时文件
+        let version_rc_path = base_path.join("version.rc");
+        let now = time::OffsetDateTime::now_utc();
+        let exe_name_escaped = exe_name.replace("\"", "\"\"");
+        let version_rc_content = format!(
+            "1 VERSIONINFO\r\nFILEVERSION 1,0,0,0\r\nPRODUCTVERSION 1,0,0,0\r\nFILEFLAGSMASK 0x3fL\r\nFILEFLAGS 0x0L\r\nFILEOS 0x40004L\r\nFILETYPE 0x1L\r\nFILESUBTYPE 0x0L\r\nBEGIN\r\n  BLOCK \"StringFileInfo\"\r\n  BEGIN\r\n    BLOCK \"040904b0\"\r\n    BEGIN\r\n      VALUE \"CompanyName\", \"PakePlus\"\r\n      VALUE \"FileDescription\", \"{}\"\r\n      VALUE \"FileVersion\", \"1.0.0.0\"\r\n      VALUE \"LegalCopyright\", \"Copyright (C) {}\"\r\n      VALUE \"ProductName\", \"{}\"\r\n      VALUE \"ProductVersion\", \"1.0.0.0\"\r\n    END\r\n  END\r\n  BLOCK \"VarFileInfo\"\r\n  BEGIN\r\n    VALUE \"Translation\", 0x409, 1200\r\n  END\r\nEND\r\n",
+            exe_name_escaped,
+            now.year(),
+            exe_name_escaped
+        );
+        let _ = fs::write(&version_rc_path, version_rc_content);
+
+        // 编写 Resource Hacker 脚本（路径用单反斜杠，RH脚本格式要求）
+        let target_exe_str = target_exe.to_string_lossy().to_string();
+        let icon_ico_str = icon_ico_path.to_string_lossy().to_string();
+        let version_rc_str = version_rc_path.to_string_lossy().to_string();
+        let log_str = base_path.join("rh.log").to_string_lossy().to_string();
+
+        let mut rh_script_content = String::new();
+        rh_script_content.push_str(&format!(
+            "[FILENAMES]\nExe=\"{}\"\nSaveAs=\"{}\"\nLog=\"{}\"\n\n[COMMANDS]\n",
+            target_exe_str, target_exe_str, log_str
+        ));
+
+        if icon_ok {
+            rh_script_content.push_str(&format!(
+                "-addoverwrite \"{}\", ICONGROUP,MAINICON,1033\n",
+                icon_ico_str
+            ));
+        }
+        rh_script_content.push_str(&format!(
+            "-add \"{}\", VERSIONINFO,1,1033\n",
+            version_rc_str
+        ));
+
+        // 写入 RH 脚本到输出目录（避免 AppData 路径问题）
+        let rh_script_path = base_path.join("rhscript.txt");
+        let _ = fs::write(&rh_script_path, &rh_script_content);
+        println!("[PakePlus] RH 脚本已生成: {:?}", rh_script_path);
+
+        // 在输出目录本地执行 rh.exe
+        let rh_cmd = format!(
+            "& \"{}\" -script \"{}\"",
+            rh_local.to_string_lossy(),
+            rh_script_path.to_string_lossy()
+        );
+        println!("[PakePlus] 执行 RH 命令: {}", rh_cmd);
+        match run_command(rh_cmd).await {
+            Ok(_) => println!("[PakePlus] Resource Hacker 资源替换成功（图标+版本）"),
+            Err(e) => println!("[PakePlus] Resource Hacker 警告: {}", e),
+        }
+    } else {
+        println!("[PakePlus] 未找到 rh.exe，跳过资源替换");
+    }
+
+    println!("[PakePlus] windows_build 完成");
+    Ok(())
+}
+
+// ========== 辅助函数 ==========
+
+// 修改 PE 文件头的 Subsystem 字段为 IMAGE_SUBSYSTEM_WINDOWS_GUI (2)
+fn set_pe_subsystem_windows(exe_path: &std::path::Path) -> Result<(), String> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(exe_path)
+        .map_err(|e| e.to_string())?;
+
+    // 1. 读取 e_lfanew (MZ 头偏移 0x3C 处的 4 字节，指向 PE 签名位置)
+    let mut buf = [0u8; 2];
+    file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    file.read_exact(&mut buf).map_err(|e| e.to_string())?;
+    if buf[0] != b'M' || buf[1] != b'Z' {
+        return Err("不是有效的 MZ PE 文件".into());
+    }
+    let mut e_lfanew_buf = [0u8; 4];
+    file.seek(SeekFrom::Start(0x3C))
+        .map_err(|e| e.to_string())?;
+    file.read_exact(&mut e_lfanew_buf).map_err(|e| e.to_string())?;
+    let pe_off = u32::from_le_bytes(e_lfanew_buf) as u64;
+
+    // 2. 验证 PE 签名
+    let mut sig = [0u8; 4];
+    file.seek(SeekFrom::Start(pe_off)).map_err(|e| e.to_string())?;
+    file.read_exact(&mut sig).map_err(|e| e.to_string())?;
+    if &sig != b"PE\0\0" {
+        return Err("不是有效的 PE 文件".into());
+    }
+
+    // 3. 跳到 Subsystem 字段:
+    //    COFF header 20 bytes (4 signature already used, + 20 = 0x18)
+    //    = COFF header 结束位置 pe_off + 4 + 20 = pe_off + 24
+    //    Standard (optional) header 起点 pe_off + 24
+    //    Subsystem 在 Standard header 偏移 0x44 处，即绝对 = pe_off + 24 + 0x44
+    //    = pe_off + 0x5C
+    let subsys_offset = pe_off + 24 + 0x44;
+    file.seek(SeekFrom::Start(subsys_offset))
+        .map_err(|e| e.to_string())?;
+    // 写入 IMAGE_SUBSYSTEM_WINDOWS_GUI = 2 (2 字节，little-endian)
+    file.write_all(&[2u8, 0]).map_err(|e| e.to_string())?;
+    file.flush().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// 将 base64 PNG 解码并生成 .ico 文件（内含 16/32/48/64/128/256 多尺寸）
+fn generate_ico_from_png(base64_png: &str, ico_output: &std::path::Path) -> Result<(), String> {
+    let png_bytes = if base64_png.starts_with("data:image/png;base64,") {
+        &base64_png[22..]
+    } else {
+        base64_png
+    };
+    let raw = BASE64_STANDARD
+        .decode(png_bytes.trim())
+        .map_err(|e| format!("图标 base64 解码失败: {}", e))?;
+
+    // 直接使用 image crate 解码 PNG 并缩放多种尺寸，再组装 ICO
+    let img =
+        image::load_from_memory(&raw).map_err(|e| format!("图标 PNG 解码失败: {}", e))?;
+
+    // 需要的 ICO 尺寸 (边长)
+    let sizes: &[u32] = &[16, 24, 32, 48, 64, 96, 128, 256];
+    let mut icon_images: Vec<(u32, u32, Vec<u8>)> = Vec::new(); // (w,h, bmp_png_bytes)
+    let filter = image::imageops::FilterType::Lanczos3;
+    for &s in sizes {
+        let resized = img.resize(s, s, filter);
+        // 256 及以下保存为 PNG（ICO 格式支持 PNG 编码的子图，256 尤其推荐）
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut cursor = std::io::Cursor::new(&mut buf);
+            resized
+                .write_to(&mut cursor, image::ImageFormat::Png)
+                .map_err(|e| format!("图标尺寸 {} 编码失败: {}", s, e))?;
+        }
+        icon_images.push((s, s, buf));
+    }
+
+    // ---- 组装 ICO 文件 ----
+    // ICONDIR (6 bytes)
+    //   idReserved: u16 = 0
+    //   idType:     u16 = 1 (ICO)
+    //   idCount:    u16 = N
+    // ICONDIRENTRY * N (每项目 16 bytes)
+    //   bWidth / bHeight / bColorCount / bReserved / wPlanes / wBitCount / dwBytesInRes / dwImageOffset
+    // 然后按顺序拼接每副图的原始 bytes
+    let count = icon_images.len() as u16;
+    let header_len = 6usize + 16 * count as usize;
+    let mut out = Vec::<u8>::with_capacity(header_len + icon_images.iter().map(|i| i.2.len()).sum::<usize>());
+    out.extend_from_slice(&0u16.to_le_bytes()); // reserved
+    out.extend_from_slice(&1u16.to_le_bytes()); // type = 1 (ICO)
+    out.extend_from_slice(&count.to_le_bytes());
+    let mut offset = header_len as u32;
+    for (w, h, bytes) in &icon_images {
+        // 宽/高: 256 存 0，否则存实际值
+        out.push((*w).min(256) as u8);
+        out.push((*h).min(256) as u8);
+        out.push(0u8); // color count (0=真彩色)
+        out.push(0u8); // reserved
+        out.extend_from_slice(&1u16.to_le_bytes()); // planes
+        out.extend_from_slice(&32u16.to_le_bytes()); // bit count (ARGB)
+        out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        out.extend_from_slice(&offset.to_le_bytes());
+        offset += bytes.len() as u32;
+    }
+    for (_, _, bytes) in &icon_images {
+        out.extend_from_slice(bytes);
+    }
+    fs::write(ico_output, &out).map_err(|e| format!("写入 ico 文件失败: {}", e))?;
     Ok(())
 }
 
@@ -639,12 +886,26 @@ pub async fn build_local(
     target_dir: &str,
     project_name: &str,
     exe_name: &str,
-    config: WindowConfig,
+    mut config: WindowConfig,
     base64_png: String,
     debug: bool,
     custom_js: String,
     html_path: String,
 ) -> Result<(), String> {
+    // 修复：将被错误反序列化为 AssetUrl 的外部URL转换为 External
+    // Tauri v2 的 WebviewUrl serde 实现会将字符串默认为 AssetUrl，
+    // 导致外部链接被当作本地资源加载
+    let url = config.url.clone();
+    if let WebviewUrl::App(path) = url {
+        let url_str = path.to_string_lossy().to_string();
+        if url_str.starts_with("http://") || url_str.starts_with("https://") {
+            if let Ok(external_url) = Url::parse(&url_str) {
+                println!("[PakePlus] URL修复: AssetUrl -> External({})", url_str);
+                config.url = WebviewUrl::External(external_url);
+            }
+        }
+    }
+
     handle.emit("local-progress", "10").unwrap();
     let resource_path = handle
         .path()
@@ -674,6 +935,27 @@ pub async fn build_local(
             .path()
             .resolve("rhscript.txt", BaseDirectory::AppData)
             .expect("failed to resolve resource");
+
+        // 修复：从 Tauri 资源系统解析 rh.exe，而不是依赖 exe_dir/data/
+        // Tauri v2 将 data 目录嵌入资源，不保证物理文件存在于 exe 旁边
+        let output_base = Path::new(target_dir).join(exe_name);
+        if !output_base.exists() {
+            let _ = fs::create_dir_all(&output_base);
+        }
+        let rh_target = output_base.join("rh.exe");
+        let rh_from_resource = handle
+            .path()
+            .resolve("data/rh.exe", BaseDirectory::Resource)
+            .ok();
+        if let Some(rh_src) = rh_from_resource {
+            if rh_src.exists() {
+                match fs::copy(&rh_src, &rh_target) {
+                    Ok(_) => println!("[PakePlus] rh.exe 已从资源复制到输出目录"),
+                    Err(e) => println!("[PakePlus] rh.exe 复制失败: {}", e),
+                }
+            }
+        }
+
         windows_build(
             target_dir,
             exe_name,
@@ -681,6 +963,7 @@ pub async fn build_local(
             custom_js,
             html_path,
             script_path.to_str().unwrap().to_string(),
+            base64_png.clone(),
         )
         .await?;
     }
@@ -769,4 +1052,13 @@ pub fn png_to_icns(base64_png: String, output_dir: String) -> Result<(), String>
     let _ = fs::remove_file(&input_png_path);
     let _ = fs::remove_dir_all(&iconset_path);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_workflow_yml(handle: AppHandle) -> Result<String, String> {
+    let resource_path = handle
+        .path()
+        .resolve("data/workflow_build.yml", BaseDirectory::Resource)
+        .map_err(|e| format!("解析工作流文件路径失败: {}", e))?;
+    fs::read_to_string(&resource_path).map_err(|e| format!("读取工作流文件失败: {}", e))
 }

@@ -1,0 +1,1 @@
+import{m as i}from"./index-DmJDewRF.js";import"./vue-Bh0VYvnx.js";import"./pinia-DUFQs9HD.js";import"./element-B_33u7pJ.js";import"./router-DPL1su38.js";async function e(t=0){await i("plugin:process|exit",{code:t})}async function s(){await i("plugin:process|restart")}export{e as exit,s as relaunch};

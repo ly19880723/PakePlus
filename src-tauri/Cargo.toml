@@ -38,4 +38,7 @@ tauri-plugin-http = { version = "2.2.0", features = ["unsafe-headers"] }
 tauri-plugin-clipboard-manager = "2.0.0"
 tauri-plugin-store = "2.0.0"
 tauri-plugin-process = "2"
-tauri-plugin-updater = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "v2" }
+tauri-plugin-updater = "2"
+image = "0.25"
+time = "0.3"
+ureq = { version = "2", features = ["json", "tls"] }

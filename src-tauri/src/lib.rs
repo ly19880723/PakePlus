@@ -59,11 +59,14 @@ pub fn run() {
             command::cmds::macos_build,
             command::cmds::linux_build,
             command::cmds::build_local,
+            command::cmds::get_workflow_yml,
         ])
         .setup(|app| {
-            tauri::async_runtime::block_on(async move {
-                let _ = utils::init::resolve_setup(app).await;
-            });
+            let app_handle = app.handle().clone();
+            // WebView 创建必须在主线程执行，不能 spawn 到异步任务
+            if let Err(e) = utils::init::resolve_setup_sync(app_handle) {
+                eprintln!("[PakePlus] 初始化失败: {}", e);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
