@@ -7,22 +7,22 @@ on:
                 description: 'Build for macOS aarch64'
                 required: false
                 type: boolean
-                default: true
+                default: false
             build_macos_x86_64:
                 description: 'Build for macOS x86_64'
                 required: false
                 type: boolean
-                default: true
+                default: false
             build_linux_x86_64:
                 description: 'Build for Linux x86_64'
                 required: false
                 type: boolean
-                default: true
+                default: false
             build_linux_aarch64:
                 description: 'Build for Linux aarch64'
                 required: false
                 type: boolean
-                default: true
+                default: false
             build_windows_x86_64:
                 description: 'Build for Windows x86_64'
                 required: false
@@ -32,228 +32,232 @@ on:
                 description: 'Build for Windows aarch64'
                 required: false
                 type: boolean
-                default: true
+                default: false
 
 permissions:
     contents: write
-    pages: write
-    id-token: write
-
-concurrency:
-    group: pages
-    cancel-in-progress: false
 
 jobs:
-    publish-tauri:
-        permissions:
-            contents: write
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - platform: 'macos-latest'
-                      target: 'aarch64-apple-darwin'
-                      args: '--target aarch64-apple-darwin'
-                      enabled: ${{ github.event.inputs.build_macos_aarch64 == 'true' }}
-                    - platform: 'macos-latest'
-                      target: 'x86_64-apple-darwin'
-                      args: '--target x86_64-apple-darwin'
-                      enabled: ${{ github.event.inputs.build_macos_x86_64 == 'true' }}
-                    - platform: 'ubuntu-22.04'
-                      target: 'x86_64-unknown-linux-gnu'
-                      args: ''
-                      enabled: ${{ github.event.inputs.build_linux_x86_64 == 'true' }}
-                    - platform: 'ubuntu-22.04'
-                      target: 'aarch64-unknown-linux-gnu'
-                      args: ''
-                      enabled: ${{ github.event.inputs.build_linux_aarch64 == 'true' }}
-                    - platform: 'windows-latest'
-                      target: 'x86_64-pc-windows-msvc'
-                      args: ''
-                      enabled: ${{ github.event.inputs.build_windows_x86_64 == 'true' }}
-                    - platform: 'windows-latest'
-                      target: 'aarch64-pc-windows-msvc'
-                      args: '--target aarch64-pc-windows-msvc'
-                      enabled: ${{ github.event.inputs.build_windows_aarch64 == 'true' }}
-
-        runs-on: ${{ matrix.platform }}
-        timeout-minutes: 60
+    build_windows_x86_64:
+        if: ${{ github.event.inputs.build_windows_x86_64 == true }}
+        runs-on: windows-latest
         steps:
-            - name: Checkout
-              if: ${{ matrix.enabled }}
-              uses: actions/checkout@v3
-
-            - name: Check Tauri
-              if: ${{ matrix.enabled }}
-              shell: bash
-              run: |
-                  if [ -z "${{ secrets.TAURI_KEY_PASSWORD }}" ]; then
-                    echo "::error::TAURI_KEY_PASSWORD is required but not set."
-                    exit 1
-                  fi
-
-            - name: Install rust target
-              if: ${{ matrix.enabled }}
-              run: rustup target add ${{ matrix.target }}
-
+            - uses: actions/checkout@v4
             - uses: pnpm/action-setup@v4
-              if: ${{ matrix.enabled }}
               with:
                   version: 10
-
-            - name: Sync node version and setup cache
-              if: ${{ matrix.enabled }}
-              uses: actions/setup-node@v4
+            - uses: actions/setup-node@v4
               with:
                   node-version: 22.14.0
                   cache: pnpm
-
-            - name: Install frontend dependencies
-              if: ${{ matrix.enabled }}
-              run: pnpm install
-
-            - name: Install Rust stable
-              if: ${{ matrix.enabled }}
-              uses: dtolnay/rust-toolchain@stable
+            - run: pnpm install
+            - uses: dtolnay/rust-toolchain@stable
+            - run: Remove-Item -Recurse -Force ./dist -ErrorAction SilentlyContinue
+              shell: pwsh
+            - run: pnpm build
+            - run: |
+                $cfg = Get-Content "scripts/ppconfig.json" -ErrorAction SilentlyContinue | ConvertFrom-Json
+                if ($cfg) {
+                    $name = if ($cfg.showName) { $cfg.showName } elseif ($cfg.name) { $cfg.name } else { "PakePlus" }
+                    $url = if ($cfg.url) { $cfg.url } else { "https://juejin.cn/" }
+                    $ver = if ($cfg.version) { $cfg.version } else { "0.0.1" }
+                    $w = if ($cfg.width) { $cfg.width } else { 800 }
+                    $h = if ($cfg.height) { $cfg.height } else { 600 }
+                    Write-Host "App: $name URL: $url Ver: $ver Size: ${w}x${h}"
+                } else {
+                    Write-Host "No ppconfig.json, using defaults"
+                    $name = "PakePlus"
+                    $url = "https://juejin.cn/"
+                    $ver = "0.0.1"
+                    $w = 800
+                    $h = 600
+                }
+                $tc = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+                $tc.productName = $name
+                $tc.identifier = if ($cfg.appid) { $cfg.appid } else { "com.pakeplus.app" }
+                $tc | ConvertTo-Json -Depth 10 | Set-Content "src-tauri/tauri.conf.json"
+                $mj = Get-Content "src-tauri/data/man.json" -Raw | ConvertFrom-Json
+                $mj.name = $name
+                $mj.version = $ver
+                $mj.window.title = $name
+                $mj.window.url = $url
+                $mj.window.width = $w
+                $mj.window.height = $h
+                $mj | ConvertTo-Json -Depth 10 | Set-Content "src-tauri/data/man.json"
+                Write-Host "Applied config: $name"
+              shell: pwsh
+            - run: |
+                if (Test-Path "$env:TAURI_SIGNING_PRIVATE_KEY") {
+                    Write-Host "Using signed build"
+                    pnpm tauri build
+                } else {
+                    Write-Host "Using unsigned dev build"
+                    pnpm tauri build --debug
+                }
+              shell: pwsh
+              working-directory: src-tauri
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+                  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+            - uses: actions/upload-artifact@v3
               with:
-                  targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+                  name: pakeplus-windows-x86_64
+                  path: |
+                      src-tauri/target/release/bundle/**/*
+                      src-tauri/target/debug/bundle/**/*
 
-            - name: Install dependencies (ubuntu only)
-              if: ${{ matrix.enabled && matrix.platform == 'ubuntu-22.04'}}
+    build_windows_aarch64:
+        if: ${{ github.event.inputs.build_windows_aarch64 == true }}
+        runs-on: windows-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: pnpm/action-setup@v4
+              with:
+                  version: 10
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22.14.0
+                  cache: pnpm
+            - run: pnpm install
+            - uses: dtolnay/rust-toolchain@stable
+            - run: rustup target add aarch64-pc-windows-msvc
+            - run: Remove-Item -Recurse -Force ./dist -ErrorAction SilentlyContinue
+              shell: pwsh
+            - run: pnpm build
+            - run: pnpm tauri build --debug --target aarch64-pc-windows-msvc
+              shell: bash
+              working-directory: src-tauri
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - uses: actions/upload-artifact@v3
+              with:
+                  name: pakeplus-windows-aarch64
+                  path: |
+                      src-tauri/target/release/bundle/**/*
+                      src-tauri/target/debug/bundle/**/*
+
+    build_macos_aarch64:
+        if: ${{ github.event.inputs.build_macos_aarch64 == true }}
+        runs-on: macos-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: pnpm/action-setup@v4
+              with:
+                  version: 10
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22.14.0
+                  cache: pnpm
+            - run: pnpm install
+            - uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: aarch64-apple-darwin
+            - run: rm -rf ./dist
+            - run: pnpm build
+            - run: pnpm tauri build --debug --target aarch64-apple-darwin
+              shell: bash
+              working-directory: src-tauri
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - uses: actions/upload-artifact@v3
+              with:
+                  name: pakeplus-macos-aarch64
+                  path: |
+                      src-tauri/target/release/bundle/**/*
+                      src-tauri/target/debug/bundle/**/*
+
+    build_macos_x86_64:
+        if: ${{ github.event.inputs.build_macos_x86_64 == true }}
+        runs-on: macos-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: pnpm/action-setup@v4
+              with:
+                  version: 10
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22.14.0
+                  cache: pnpm
+            - run: pnpm install
+            - uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: x86_64-apple-darwin
+            - run: rm -rf ./dist
+            - run: pnpm build
+            - run: pnpm tauri build --debug --target x86_64-apple-darwin
+              shell: bash
+              working-directory: src-tauri
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - uses: actions/upload-artifact@v3
+              with:
+                  name: pakeplus-macos-x86_64
+                  path: |
+                      src-tauri/target/release/bundle/**/*
+                      src-tauri/target/debug/bundle/**/*
+
+    build_linux_x86_64:
+        if: ${{ github.event.inputs.build_linux_x86_64 == true }}
+        runs-on: ubuntu-22.04
+        steps:
+            - uses: actions/checkout@v4
+            - uses: pnpm/action-setup@v4
+              with:
+                  version: 10
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22.14.0
+                  cache: pnpm
+            - run: pnpm install
+            - uses: dtolnay/rust-toolchain@stable
+            - name: Install deps
               run: |
                   sudo apt-get update
                   sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-            - name: Remove dist folder (Linux/macOS)
-              if: matrix.enabled && (runner.os == 'Linux' || runner.os == 'macOS')
-              run: rm -rf ./dist
-
-            - name: Remove dist folder (Windows)
-              if: ${{ matrix.enabled && runner.os == 'Windows' }}
-              run: Remove-Item -Recurse -Force ./dist
-              shell: pwsh
-
-            - name: Get project version
-              if: ${{ matrix.enabled }}
-              run: |
-                  VERSION=$(node -p "require('./package.json').version")
-                  echo "VERSION=$VERSION" >> $GITHUB_ENV
-                  echo "Current version: $VERSION"
+            - run: rm -rf ./dist
+            - run: pnpm build
+            - run: pnpm tauri build --debug
               shell: bash
-
-            - name: Install Dependencies
-              if: ${{ matrix.enabled }}
-              run: |
-                  curl -L -f -o dist.zip "${{ secrets.VITE_DIST_URL }}${{ env.VERSION }}.zip"
-                  unzip -o dist.zip -d dist
-
-            - name: import Apple Developer Certificate
-              if: ${{ matrix.enabled && matrix.platform == 'macos-latest'}}
-              env:
-                  APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-                  APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-                  KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-              run: |
-                  echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
-                  security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-                  security default-keychain -s build.keychain
-                  security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-                  security set-keychain-settings -t 3600 -u build.keychain
-                  security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-                  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-                  security find-identity -v -p codesigning build.keychain
-
-            - name: verify certificate
-              if: ${{ matrix.enabled && matrix.platform == 'macos-latest'}}
-              run: |
-                  CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
-                  CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
-                  echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
-                  echo "Certificate imported."
-
-            - uses: tauri-apps/tauri-action@v0
-              if: ${{ matrix.enabled }}
+              working-directory: src-tauri
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  APPLE_ID: ${{ secrets.APPLE_ID }}
-                  APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-                  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-                  APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-                  APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-                  APPLE_SIGNING_IDENTITY: ${{ env.CERT_ID }}
-                  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-                  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-                  VITE_GITHUB_DOMAIN: ${{ secrets.VITE_GITHUB_DOMAIN }}
-                  VITE_PAYJS_DOMAIN: ${{ secrets.VITE_PAYJS_DOMAIN }}
-                  VITE_PAYJS_MCHID: ${{ secrets.VITE_PAYJS_MCHID }}
-                  VITE_PAYJS_SIGN_KEY: ${{ secrets.VITE_PAYJS_SIGN_KEY }}
-                  VITE_YUNPAY_DOMAIN: ${{ secrets.VITE_YUNPAY_DOMAIN }}
-                  VITE_YUNPAY_MCHID: ${{ secrets.VITE_YUNPAY_MCHID }}
-                  VITE_YUNPAY_SIGN_KEY: ${{ secrets.VITE_YUNPAY_SIGN_KEY }}
-                  VITE_ZPAY_DOMAIN: ${{ secrets.VITE_ZPAY_DOMAIN }}
-                  VITE_ZPAY_MCHID: ${{ secrets.VITE_ZPAY_MCHID }}
-                  VITE_ZPAY_SIGN_KEY: ${{ secrets.VITE_ZPAY_SIGN_KEY }}
-                  VITE_GTAG_ID: ${{ secrets.VITE_GTAG_ID }}
-                  VITE_UPSTREAM_USER: ${{ secrets.VITE_UPSTREAM_USER }}
-                  VITE_WEB_BRANCH: ${{ secrets.VITE_WEB_BRANCH }}
-                  VITE_DEV_BRANCH: ${{ secrets.VITE_DEV_BRANCH }}
-                  VITE_MAIN_BRANCH: ${{ secrets.VITE_MAIN_BRANCH }}
-                  VITE_FILE_LIMIT_SIZE: ${{ secrets.VITE_FILE_LIMIT_SIZE }}
-                  VITE_FILE_LIMIT_NUMBER: ${{ secrets.VITE_FILE_LIMIT_NUMBER }}
-                  VITE_LOCAL_RHEXE: ${{ secrets.VITE_LOCAL_RHEXE }}
+            - uses: actions/upload-artifact@v3
               with:
-                  tagName: 'PakePlus-v__VERSION__'
-                  releaseName: 'PakePlus v__VERSION__'
-                  body_path: ./Note.md
-                  releaseDraft: true
-                  prerelease: false
-                  args: ${{ matrix.args }}
+                  name: pakeplus-linux-x86_64
+                  path: |
+                      src-tauri/target/release/bundle/**/*
+                      src-tauri/target/debug/bundle/**/*
 
-    deploy-pages:
-        runs-on: ubuntu-latest
+    build_linux_aarch64:
+        if: ${{ github.event.inputs.build_linux_aarch64 == true }}
+        runs-on: ubuntu-22.04
         steps:
-            - name: Checkout
-              uses: actions/checkout@v4
-              with:
-                  fetch-depth: 0
-
+            - uses: actions/checkout@v4
             - uses: pnpm/action-setup@v4
               with:
                   version: 10
-
-            - name: Setup Node
-              uses: actions/setup-node@v4
+            - uses: actions/setup-node@v4
               with:
                   node-version: 22.14.0
                   cache: pnpm
-
-            - name: Setup Pages
-              uses: actions/configure-pages@v4
-
-            - name: Install dependencies
-              run: pnpm install
-
-            - name: GitPress Config
-              run: node ./scripts/gitpress.cjs gitBase
-
-            - name: Build with VitePress
-              run: pnpm run docs:build
-
-            - name: Copy Static
-              run: node ./scripts/gitpress.cjs copyStatic
-
-            - name: Upload artifact
-              uses: actions/upload-pages-artifact@v3
+            - run: pnpm install
+            - uses: dtolnay/rust-toolchain@stable
+            - name: Install deps
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+            - run: rustup target add aarch64-unknown-linux-gnu
+            - run: rm -rf ./dist
+            - run: pnpm build
+            - run: pnpm tauri build --debug --target aarch64-unknown-linux-gnu
+              shell: bash
+              working-directory: src-tauri
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - uses: actions/upload-artifact@v3
               with:
-                  path: docs/dist
-
-    deploy:
-        environment:
-            name: github-pages
-            url: ${{ steps.deployment.outputs.page_url }}
-        needs: deploy-pages
-        runs-on: ubuntu-latest
-        steps:
-            - name: Deploy to GitHub Pages
-              id: deployment
-              uses: actions/deploy-pages@v4
+                  name: pakeplus-linux-aarch64
+                  path: |
+                      src-tauri/target/release/bundle/**/*
+                      src-tauri/target/debug/bundle/**/*
