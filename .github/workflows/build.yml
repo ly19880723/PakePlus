@@ -45,10 +45,6 @@ jobs:
                   node-version: 22
             - run: npm install -g pnpm
             - uses: dtolnay/rust-toolchain@stable
-            - name: Install .NET Framework
-              run: |
-                  choco install dotnet48 -y --no-progress
-              shell: pwsh
             - run: pnpm install
             - run: Remove-Item -Recurse -Force ./dist -ErrorAction SilentlyContinue
               shell: pwsh
@@ -76,6 +72,7 @@ jobs:
                     $tc = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
                     $tc.productName = $name
                     $tc.identifier = if ($cfg -and $cfg.appid) { $cfg.appid } else { "com.pakeplus.app" }
+                    $tc.bundle.active = $false
                     $tc | ConvertTo-Json -Depth 10 | Set-Content "src-tauri/tauri.conf.json"
                 }
                 if (Test-Path "src-tauri/data/man.json") {
@@ -90,15 +87,14 @@ jobs:
                 }
                 Write-Host "Applied config: $name"
               shell: pwsh
-            - run: pnpm tauri build --debug
+            - run: pnpm tauri build --debug --bundles none
               shell: pwsh
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-windows-x86_64
                   path: |
-                      src-tauri/target/release/bundle/**/*
-                      src-tauri/target/debug/bundle/**/*
+                      src-tauri/target/debug/*.exe
 
     build_windows_aarch64:
         if: ${{ github.event.inputs.build_windows_aarch64 == 'true' }}
@@ -110,24 +106,19 @@ jobs:
                   node-version: 22
             - run: npm install -g pnpm
             - uses: dtolnay/rust-toolchain@stable
-            - name: Install .NET Framework
-              run: |
-                  choco install dotnet48 -y --no-progress
-              shell: pwsh
             - run: pnpm install
             - run: rustup target add aarch64-pc-windows-msvc
             - run: Remove-Item -Recurse -Force ./dist -ErrorAction SilentlyContinue
               shell: pwsh
             - run: pnpm build
-            - run: pnpm tauri build --debug --target aarch64-pc-windows-msvc
+            - run: pnpm tauri build --debug --bundles none --target aarch64-pc-windows-msvc
               shell: pwsh
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-windows-aarch64
                   path: |
-                      src-tauri/target/release/bundle/**/*
-                      src-tauri/target/debug/bundle/**/*
+                      src-tauri/target/debug/*.exe
 
     build_macos_aarch64:
         if: ${{ github.event.inputs.build_macos_aarch64 == 'true' }}
@@ -144,14 +135,14 @@ jobs:
             - run: pnpm install
             - run: rm -rf ./dist
             - run: pnpm build
-            - run: pnpm tauri build --debug --target aarch64-apple-darwin
+            - run: pnpm tauri build --debug --bundles none --target aarch64-apple-darwin
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-macos-aarch64
                   path: |
-                      src-tauri/target/release/bundle/**/*
-                      src-tauri/target/debug/bundle/**/*
+                      src-tauri/target/debug/*.app
+                      src-tauri/target/debug/PakePlus
 
     build_macos_x86_64:
         if: ${{ github.event.inputs.build_macos_x86_64 == 'true' }}
@@ -168,14 +159,14 @@ jobs:
             - run: pnpm install
             - run: rm -rf ./dist
             - run: pnpm build
-            - run: pnpm tauri build --debug --target x86_64-apple-darwin
+            - run: pnpm tauri build --debug --bundles none --target x86_64-apple-darwin
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-macos-x86_64
                   path: |
-                      src-tauri/target/release/bundle/**/*
-                      src-tauri/target/debug/bundle/**/*
+                      src-tauri/target/debug/*.app
+                      src-tauri/target/debug/PakePlus
 
     build_linux_x86_64:
         if: ${{ github.event.inputs.build_linux_x86_64 == 'true' }}
@@ -194,14 +185,13 @@ jobs:
                   sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
             - run: rm -rf ./dist
             - run: pnpm build
-            - run: pnpm tauri build --debug
+            - run: pnpm tauri build --debug --bundles none
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-linux-x86_64
                   path: |
-                      src-tauri/target/release/bundle/**/*
-                      src-tauri/target/debug/bundle/**/*
+                      src-tauri/target/debug/PakePlus
 
     build_linux_aarch64:
         if: ${{ github.event.inputs.build_linux_aarch64 == 'true' }}
@@ -221,11 +211,10 @@ jobs:
             - run: rustup target add aarch64-unknown-linux-gnu
             - run: rm -rf ./dist
             - run: pnpm build
-            - run: pnpm tauri build --debug --target aarch64-unknown-linux-gnu
+            - run: pnpm tauri build --debug --bundles none --target aarch64-unknown-linux-gnu
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-linux-aarch64
                   path: |
-                      src-tauri/target/release/bundle/**/*
-                      src-tauri/target/debug/bundle/**/*
+                      src-tauri/target/debug/PakePlus

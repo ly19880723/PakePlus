@@ -10,8 +10,7 @@
         "beforeBuildCommand": "pnpm build"
     },
     "bundle": {
-        "active": true,
-        "targets": "nsis",
+        "active": false,
         "resources": [
             "data/**"
         ]
