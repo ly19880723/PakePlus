@@ -45,6 +45,10 @@ jobs:
                   node-version: 22
             - run: npm install -g pnpm
             - uses: dtolnay/rust-toolchain@stable
+            - name: Install .NET Framework
+              run: |
+                  choco install dotnet48 -y --no-progress
+              shell: pwsh
             - run: pnpm install
             - run: Remove-Item -Recurse -Force ./dist -ErrorAction SilentlyContinue
               shell: pwsh
@@ -106,6 +110,10 @@ jobs:
                   node-version: 22
             - run: npm install -g pnpm
             - uses: dtolnay/rust-toolchain@stable
+            - name: Install .NET Framework
+              run: |
+                  choco install dotnet48 -y --no-progress
+              shell: pwsh
             - run: pnpm install
             - run: rustup target add aarch64-pc-windows-msvc
             - run: Remove-Item -Recurse -Force ./dist -ErrorAction SilentlyContinue
