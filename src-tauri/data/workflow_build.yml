@@ -89,11 +89,40 @@ jobs:
             - run: cargo build
               shell: pwsh
               working-directory: src-tauri
+            - run: |
+                $targetDir = "src-tauri/target/debug"
+                $configDir = Join-Path $targetDir "config"
+                New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+
+                # 读取 man.json 并 base64 编码
+                $manJsonPath = "src-tauri/data/man.json"
+                if (Test-Path $manJsonPath) {
+                    $manContent = Get-Content $manJsonPath -Raw
+                    $manBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($manContent))
+                    Set-Content -Path (Join-Path $configDir "man") -Value $manBase64 -NoNewline
+                    Write-Host "man.json 已打包到 config/man"
+                }
+
+                # 复制 custom_js 如果存在
+                $customJsPath = "src-tauri/data/custom.js"
+                if (Test-Path $customJsPath) {
+                    Copy-Item $customJsPath (Join-Path $configDir "custom.js") -Force
+                    Write-Host "custom.js 已复制"
+                }
+
+                # 复制 www 目录如果存在
+                $wwwDir = "dist"
+                if (Test-Path $wwwDir) {
+                    Copy-Item -Path $wwwDir -Destination (Join-Path $configDir "www") -Recurse -Force
+                    Write-Host "www 目录已复制"
+                }
+              shell: pwsh
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-windows-x86_64
                   path: |
                       src-tauri/target/debug/*.exe
+                      src-tauri/target/debug/config/
 
     build_windows_aarch64:
         if: ${{ github.event.inputs.build_windows_aarch64 == 'true' }}
@@ -110,14 +139,72 @@ jobs:
             - run: Remove-Item -Recurse -Force ./dist -ErrorAction SilentlyContinue
               shell: pwsh
             - run: pnpm build
+            - run: |
+                $cfg = $null
+                if (Test-Path "scripts/ppconfig.json") {
+                    $cfg = Get-Content "scripts/ppconfig.json" -Raw | ConvertFrom-Json
+                }
+                if ($cfg) {
+                    $name = if ($cfg.showName) { $cfg.showName } elseif ($cfg.name) { $cfg.name } else { "PakePlus" }
+                    $url = if ($cfg.url) { $cfg.url } else { "https://juejin.cn/" }
+                    $ver = if ($cfg.version) { $cfg.version } else { "0.0.1" }
+                    $w = if ($cfg.width) { $cfg.width } else { 800 }
+                    $h = if ($cfg.height) { $cfg.height } else { 600 }
+                } else {
+                    $name = "PakePlus"
+                    $url = "https://juejin.cn/"
+                    $ver = "0.0.1"
+                    $w = 800
+                    $h = 600
+                }
+                Write-Host "App: $name URL: $url Ver: $ver Size: ${w}x${h}"
+                if (Test-Path "src-tauri/tauri.conf.json") {
+                    $tc = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+                    $tc.productName = $name
+                    $tc.identifier = if ($cfg -and $cfg.appid) { $cfg.appid } else { "com.pakeplus.app" }
+                    $tc | ConvertTo-Json -Depth 10 | Set-Content "src-tauri/tauri.conf.json"
+                }
+                if (Test-Path "src-tauri/data/man.json") {
+                    $mj = Get-Content "src-tauri/data/man.json" -Raw | ConvertFrom-Json
+                    $mj.name = $name
+                    $mj.version = $ver
+                    $mj.window.title = $name
+                    $mj.window.url = $url
+                    $mj.window.width = $w
+                    $mj.window.height = $h
+                    $mj | ConvertTo-Json -Depth 10 | Set-Content "src-tauri/data/man.json"
+                }
+                Write-Host "Applied config: $name"
+              shell: pwsh
             - run: cargo build --target aarch64-pc-windows-msvc
               shell: pwsh
               working-directory: src-tauri
+            - run: |
+                $targetDir = "src-tauri/target/aarch64-pc-windows-msvc/debug"
+                $configDir = Join-Path $targetDir "config"
+                New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+                $manJsonPath = "src-tauri/data/man.json"
+                if (Test-Path $manJsonPath) {
+                    $manContent = Get-Content $manJsonPath -Raw
+                    $manBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($manContent))
+                    Set-Content -Path (Join-Path $configDir "man") -Value $manBase64 -NoNewline
+                    Write-Host "man.json 已打包到 config/man"
+                }
+                $customJsPath = "src-tauri/data/custom.js"
+                if (Test-Path $customJsPath) {
+                    Copy-Item $customJsPath (Join-Path $configDir "custom.js") -Force
+                }
+                $wwwDir = "dist"
+                if (Test-Path $wwwDir) {
+                    Copy-Item -Path $wwwDir -Destination (Join-Path $configDir "www") -Recurse -Force
+                }
+              shell: pwsh
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-windows-aarch64
                   path: |
-                      src-tauri/target/debug/*.exe
+                      src-tauri/target/aarch64-pc-windows-msvc/debug/*.exe
+                      src-tauri/target/aarch64-pc-windows-msvc/debug/config/
 
     build_macos_aarch64:
         if: ${{ github.event.inputs.build_macos_aarch64 == 'true' }}
@@ -134,13 +221,57 @@ jobs:
             - run: pnpm install
             - run: rm -rf ./dist
             - run: pnpm build
+            - name: Apply config
+              run: |
+                  if [ -f scripts/ppconfig.json ]; then
+                      NAME=$(jq -r '.showName // .name // "PakePlus"' scripts/ppconfig.json)
+                      URL=$(jq -r '.url // "https://juejin.cn/"' scripts/ppconfig.json)
+                      VER=$(jq -r '.version // "0.0.1"' scripts/ppconfig.json)
+                      W=$(jq -r '.width // 800' scripts/ppconfig.json)
+                      H=$(jq -r '.height // 600' scripts/ppconfig.json)
+                      APPID=$(jq -r '.appid // "com.pakeplus.app"' scripts/ppconfig.json)
+                  else
+                      NAME="PakePlus"
+                      URL="https://juejin.cn/"
+                      VER="0.0.1"
+                      W=800
+                      H=600
+                      APPID="com.pakeplus.app"
+                  fi
+                  echo "App: $NAME URL: $URL Ver: $Ver Size: ${W}x${H}"
+                  if [ -f src-tauri/tauri.conf.json ]; then
+                      jq --arg name "$NAME" --arg appid "$APPID" '.productName = $name | .identifier = $appid' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+                  fi
+                  if [ -f src-tauri/data/man.json ]; then
+                      jq --arg name "$NAME" --arg ver "$VER" --arg url "$URL" --arg w "$W" --arg h "$H" \
+                        '.name = $name | .version = $ver | .window.title = $name | .window.url = $url | .window.width = ($w | tonumber) | .window.height = ($h | tonumber)' \
+                        src-tauri/data/man.json > tmp.json && mv tmp.json src-tauri/data/man.json
+                  fi
+                  echo "Applied config: $NAME"
             - run: cargo build --target aarch64-apple-darwin
               working-directory: src-tauri
+            - name: Package config
+              run: |
+                  TARGET_DIR="src-tauri/target/aarch64-apple-darwin/debug"
+                  CONFIG_DIR="$TARGET_DIR/config"
+                  mkdir -p "$CONFIG_DIR"
+                  if [ -f src-tauri/data/man.json ]; then
+                      MAN_BASE64=$(base64 -i src-tauri/data/man.json)
+                      echo -n "$MAN_BASE64" > "$CONFIG_DIR/man"
+                      echo "man.json 已打包到 config/man"
+                  fi
+                  if [ -f src-tauri/data/custom.js ]; then
+                      cp src-tauri/data/custom.js "$CONFIG_DIR/"
+                  fi
+                  if [ -d dist ]; then
+                      cp -r dist "$CONFIG_DIR/www"
+                  fi
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-macos-aarch64
                   path: |
-                      src-tauri/target/debug/PakePlus
+                      src-tauri/target/aarch64-apple-darwin/debug/PakePlus
+                      src-tauri/target/aarch64-apple-darwin/debug/config/
 
     build_macos_x86_64:
         if: ${{ github.event.inputs.build_macos_x86_64 == 'true' }}
@@ -157,13 +288,57 @@ jobs:
             - run: pnpm install
             - run: rm -rf ./dist
             - run: pnpm build
+            - name: Apply config
+              run: |
+                  if [ -f scripts/ppconfig.json ]; then
+                      NAME=$(jq -r '.showName // .name // "PakePlus"' scripts/ppconfig.json)
+                      URL=$(jq -r '.url // "https://juejin.cn/"' scripts/ppconfig.json)
+                      VER=$(jq -r '.version // "0.0.1"' scripts/ppconfig.json)
+                      W=$(jq -r '.width // 800' scripts/ppconfig.json)
+                      H=$(jq -r '.height // 600' scripts/ppconfig.json)
+                      APPID=$(jq -r '.appid // "com.pakeplus.app"' scripts/ppconfig.json)
+                  else
+                      NAME="PakePlus"
+                      URL="https://juejin.cn/"
+                      VER="0.0.1"
+                      W=800
+                      H=600
+                      APPID="com.pakeplus.app"
+                  fi
+                  echo "App: $NAME URL: $URL Ver: $Ver Size: ${W}x${H}"
+                  if [ -f src-tauri/tauri.conf.json ]; then
+                      jq --arg name "$NAME" --arg appid "$APPID" '.productName = $name | .identifier = $appid' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+                  fi
+                  if [ -f src-tauri/data/man.json ]; then
+                      jq --arg name "$NAME" --arg ver "$VER" --arg url "$URL" --arg w "$W" --arg h "$H" \
+                        '.name = $name | .version = $ver | .window.title = $name | .window.url = $url | .window.width = ($w | tonumber) | .window.height = ($h | tonumber)' \
+                        src-tauri/data/man.json > tmp.json && mv tmp.json src-tauri/data/man.json
+                  fi
+                  echo "Applied config: $NAME"
             - run: cargo build --target x86_64-apple-darwin
               working-directory: src-tauri
+            - name: Package config
+              run: |
+                  TARGET_DIR="src-tauri/target/x86_64-apple-darwin/debug"
+                  CONFIG_DIR="$TARGET_DIR/config"
+                  mkdir -p "$CONFIG_DIR"
+                  if [ -f src-tauri/data/man.json ]; then
+                      MAN_BASE64=$(base64 -i src-tauri/data/man.json)
+                      echo -n "$MAN_BASE64" > "$CONFIG_DIR/man"
+                      echo "man.json 已打包到 config/man"
+                  fi
+                  if [ -f src-tauri/data/custom.js ]; then
+                      cp src-tauri/data/custom.js "$CONFIG_DIR/"
+                  fi
+                  if [ -d dist ]; then
+                      cp -r dist "$CONFIG_DIR/www"
+                  fi
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-macos-x86_64
                   path: |
-                      src-tauri/target/debug/PakePlus
+                      src-tauri/target/x86_64-apple-darwin/debug/PakePlus
+                      src-tauri/target/x86_64-apple-darwin/debug/config/
 
     build_linux_x86_64:
         if: ${{ github.event.inputs.build_linux_x86_64 == 'true' }}
@@ -182,13 +357,57 @@ jobs:
                   sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
             - run: rm -rf ./dist
             - run: pnpm build
+            - name: Apply config
+              run: |
+                  if [ -f scripts/ppconfig.json ]; then
+                      NAME=$(jq -r '.showName // .name // "PakePlus"' scripts/ppconfig.json)
+                      URL=$(jq -r '.url // "https://juejin.cn/"' scripts/ppconfig.json)
+                      VER=$(jq -r '.version // "0.0.1"' scripts/ppconfig.json)
+                      W=$(jq -r '.width // 800' scripts/ppconfig.json)
+                      H=$(jq -r '.height // 600' scripts/ppconfig.json)
+                      APPID=$(jq -r '.appid // "com.pakeplus.app"' scripts/ppconfig.json)
+                  else
+                      NAME="PakePlus"
+                      URL="https://juejin.cn/"
+                      VER="0.0.1"
+                      W=800
+                      H=600
+                      APPID="com.pakeplus.app"
+                  fi
+                  echo "App: $NAME URL: $URL Ver: $Ver Size: ${W}x${H}"
+                  if [ -f src-tauri/tauri.conf.json ]; then
+                      jq --arg name "$NAME" --arg appid "$APPID" '.productName = $name | .identifier = $appid' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+                  fi
+                  if [ -f src-tauri/data/man.json ]; then
+                      jq --arg name "$NAME" --arg ver "$VER" --arg url "$URL" --arg w "$W" --arg h "$H" \
+                        '.name = $name | .version = $ver | .window.title = $name | .window.url = $url | .window.width = ($w | tonumber) | .window.height = ($h | tonumber)' \
+                        src-tauri/data/man.json > tmp.json && mv tmp.json src-tauri/data/man.json
+                  fi
+                  echo "Applied config: $NAME"
             - run: cargo build
               working-directory: src-tauri
+            - name: Package config
+              run: |
+                  TARGET_DIR="src-tauri/target/debug"
+                  CONFIG_DIR="$TARGET_DIR/config"
+                  mkdir -p "$CONFIG_DIR"
+                  if [ -f src-tauri/data/man.json ]; then
+                      MAN_BASE64=$(base64 -w 0 src-tauri/data/man.json)
+                      echo -n "$MAN_BASE64" > "$CONFIG_DIR/man"
+                      echo "man.json 已打包到 config/man"
+                  fi
+                  if [ -f src-tauri/data/custom.js ]; then
+                      cp src-tauri/data/custom.js "$CONFIG_DIR/"
+                  fi
+                  if [ -d dist ]; then
+                      cp -r dist "$CONFIG_DIR/www"
+                  fi
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-linux-x86_64
                   path: |
                       src-tauri/target/debug/PakePlus
+                      src-tauri/target/debug/config/
 
     build_linux_aarch64:
         if: ${{ github.event.inputs.build_linux_aarch64 == 'true' }}
@@ -208,10 +427,54 @@ jobs:
             - run: rustup target add aarch64-unknown-linux-gnu
             - run: rm -rf ./dist
             - run: pnpm build
+            - name: Apply config
+              run: |
+                  if [ -f scripts/ppconfig.json ]; then
+                      NAME=$(jq -r '.showName // .name // "PakePlus"' scripts/ppconfig.json)
+                      URL=$(jq -r '.url // "https://juejin.cn/"' scripts/ppconfig.json)
+                      VER=$(jq -r '.version // "0.0.1"' scripts/ppconfig.json)
+                      W=$(jq -r '.width // 800' scripts/ppconfig.json)
+                      H=$(jq -r '.height // 600' scripts/ppconfig.json)
+                      APPID=$(jq -r '.appid // "com.pakeplus.app"' scripts/ppconfig.json)
+                  else
+                      NAME="PakePlus"
+                      URL="https://juejin.cn/"
+                      VER="0.0.1"
+                      W=800
+                      H=600
+                      APPID="com.pakeplus.app"
+                  fi
+                  echo "App: $NAME URL: $URL Ver: $Ver Size: ${W}x${H}"
+                  if [ -f src-tauri/tauri.conf.json ]; then
+                      jq --arg name "$NAME" --arg appid "$APPID" '.productName = $name | .identifier = $appid' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+                  fi
+                  if [ -f src-tauri/data/man.json ]; then
+                      jq --arg name "$NAME" --arg ver "$VER" --arg url "$URL" --arg w "$W" --arg h "$H" \
+                        '.name = $name | .version = $ver | .window.title = $name | .window.url = $url | .window.width = ($w | tonumber) | .window.height = ($h | tonumber)' \
+                        src-tauri/data/man.json > tmp.json && mv tmp.json src-tauri/data/man.json
+                  fi
+                  echo "Applied config: $NAME"
             - run: cargo build --target aarch64-unknown-linux-gnu
               working-directory: src-tauri
+            - name: Package config
+              run: |
+                  TARGET_DIR="src-tauri/target/aarch64-unknown-linux-gnu/debug"
+                  CONFIG_DIR="$TARGET_DIR/config"
+                  mkdir -p "$CONFIG_DIR"
+                  if [ -f src-tauri/data/man.json ]; then
+                      MAN_BASE64=$(base64 -w 0 src-tauri/data/man.json)
+                      echo -n "$MAN_BASE64" > "$CONFIG_DIR/man"
+                      echo "man.json 已打包到 config/man"
+                  fi
+                  if [ -f src-tauri/data/custom.js ]; then
+                      cp src-tauri/data/custom.js "$CONFIG_DIR/"
+                  fi
+                  if [ -d dist ]; then
+                      cp -r dist "$CONFIG_DIR/www"
+                  fi
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-linux-aarch64
                   path: |
-                      src-tauri/target/debug/PakePlus
+                      src-tauri/target/aarch64-unknown-linux-gnu/debug/PakePlus
+                      src-tauri/target/aarch64-unknown-linux-gnu/debug/config/

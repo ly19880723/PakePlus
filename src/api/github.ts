@@ -2,7 +2,7 @@
 // 在 Tauri 环境使用 @tauri-apps/plugin-http 的 fetch（绕过 CORS），浏览器环境使用原生 fetch
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import { isTauriEnv } from '@/utils/storage'
-import type { GitHubRepo, GitHubRelease, WorkflowRun } from '@/types'
+import type { GitHubRepo, GitHubRelease, WorkflowRun, GitHubArtifact, ArtifactList } from '@/types'
 
 const GITHUB_API = 'https://api.github.com'
 
@@ -202,4 +202,35 @@ export async function createBranch(
         const err = await resp.json()
         throw new Error(`创建分支失败: ${err.message || resp.status}`)
     }
+}
+
+// 获取工作流运行的 Artifacts 列表
+export async function getWorkflowRunArtifacts(
+    token: string,
+    owner: string,
+    repo: string,
+    runId: number
+): Promise<GitHubArtifact[]> {
+    const resp = await fetchFn(
+        `${GITHUB_API}/repos/${owner}/${repo}/actions/runs/${runId}/artifacts`,
+        { headers: headers(token) }
+    )
+    if (!resp.ok) throw new Error(`获取Artifacts失败: ${resp.status}`)
+    const data: ArtifactList = await resp.json()
+    return data.artifacts || []
+}
+
+// 获取仓库的所有 Artifacts
+export async function getArtifacts(
+    token: string,
+    owner: string,
+    repo: string
+): Promise<GitHubArtifact[]> {
+    const resp = await fetchFn(
+        `${GITHUB_API}/repos/${owner}/${repo}/actions/artifacts?per_page=30`,
+        { headers: headers(token) }
+    )
+    if (!resp.ok) throw new Error(`获取Artifacts失败: ${resp.status}`)
+    const data: ArtifactList = await resp.json()
+    return data.artifacts || []
 }

@@ -273,6 +273,29 @@ export interface GitHubRelease {
     html_url: string
 }
 
+// GitHub Actions Artifact
+export interface GitHubArtifact {
+    id: number
+    name: string
+    size_in_bytes: number
+    url: string
+    archive_download_url: string
+    expired: boolean
+    created_at: string
+    updated_at: string
+    expires_at: string
+    workflow_run?: {
+        id: number
+        name: string
+        html_url: string
+    }
+}
+
+export interface ArtifactList {
+    total_count: number
+    artifacts: GitHubArtifact[]
+}
+
 // 默认项目配置
 export function createDefaultConfig(): ProjectConfig {
     return {

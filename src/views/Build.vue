@@ -140,8 +140,27 @@
                         </div>
                     </div>
 
-                    <!-- Release 下载 -->
-                    <div v-if="releases.length" style="margin-top: 24px">
+                    <!-- Artifacts 下载 -->
+                    <div v-if="artifacts.length" style="margin-top: 24px">
+                        <div class="form-section-title">{{ t('build.downloadApp') }}</div>
+                        <div v-for="art in artifacts" :key="art.id" class="build-status-card">
+                            <div style="display: flex; align-items: center; gap: 12px; flex: 1">
+                                <div>
+                                    <div style="font-size: 14px; font-weight: 500">{{ art.name }}</div>
+                                    <div style="font-size: 12px; color: #909399">
+                                        {{ formatSize(art.size_in_bytes) }} · {{ formatTime(art.created_at) }}
+                                    </div>
+                                </div>
+                            </div>
+                            <el-button type="primary" size="small" @click="downloadArtifact(art)">
+                                <el-icon><Download /></el-icon>
+                                下载
+                            </el-button>
+                        </div>
+                    </div>
+
+                    <!-- Release 下载（兼容） -->
+                    <div v-if="releases.length && !artifacts.length" style="margin-top: 24px">
                         <div class="form-section-title">{{ t('build.downloadApp') }}</div>
                         <div v-for="rel in releases" :key="rel.id" class="build-status-card" style="flex-direction: column; align-items: flex-start">
                             <div style="font-weight: 600; font-size: 15px">{{ rel.tag_name }}</div>
@@ -180,7 +199,7 @@ import { useSettingsStore } from '@/stores/settings'
 import * as tauriApi from '@/api/tauri'
 import * as githubApi from '@/api/github'
 import { isTauriEnv } from '@/utils/storage'
-import type { WorkflowRun, GitHubRelease, ReleaseAsset } from '@/types'
+import type { WorkflowRun, GitHubRelease, ReleaseAsset, GitHubArtifact } from '@/types'
 
 const route = useRoute()
 const { t } = useI18n()
@@ -207,8 +226,10 @@ const cloudPlatforms = ref<string[]>([
 ])
 const workflowRuns = ref<WorkflowRun[]>([])
 const releases = ref<GitHubRelease[]>([])
+const artifacts = ref<GitHubArtifact[]>([])
 
 let unlistenProgress: UnlistenFn | null = null
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const canLocalBuild = computed(() => {
     return project.value && (project.value.config.url || project.value.config.isHtml) && localConfig.value.targetDir
@@ -229,11 +250,14 @@ onMounted(async () => {
     // 检查 fork 状态
     if (settingsStore.githubToken && settingsStore.username) {
         await checkForkStatus()
+        // 启动轮询机制
+        startPolling()
     }
 })
 
 onUnmounted(() => {
     unlistenProgress?.()
+    stopPolling()
 })
 
 function addLog(text: string, type: string = 'log-info') {
@@ -447,14 +471,38 @@ async function startCloudBuild() {
         ElMessage.success('已触发云端构建')
         addLog('已触发 GitHub Actions 构建', 'log-success')
 
-        // 延迟后刷新状态
-        setTimeout(() => loadWorkflowRuns(), 5000)
+        // 立即刷新状态并启动轮询
+        await loadWorkflowRuns()
+        startPolling()
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
         ElMessage.error('云端构建失败: ' + msg)
         addLog('云端构建失败: ' + msg, 'log-error')
     } finally {
         cloudBuilding.value = false
+    }
+}
+
+function startPolling() {
+    stopPolling()
+    pollTimer = setInterval(async () => {
+        await loadWorkflowRuns()
+        // 检查是否有进行中的构建
+        const hasActive = workflowRuns.value.some(
+            r => r.status === 'in_progress' || r.status === 'queued'
+        )
+        if (!hasActive) {
+            // 所有构建完成，加载 artifacts
+            await loadArtifacts()
+            stopPolling()
+        }
+    }, 10000) // 每10秒轮询一次
+}
+
+function stopPolling() {
+    if (pollTimer) {
+        clearInterval(pollTimer)
+        pollTimer = null
     }
 }
 
@@ -465,6 +513,18 @@ async function loadWorkflowRuns() {
             settingsStore.username,
             'PakePlus',
             10
+        )
+    } catch {
+        // ignore
+    }
+}
+
+async function loadArtifacts() {
+    try {
+        artifacts.value = await githubApi.getArtifacts(
+            settingsStore.githubToken,
+            settingsStore.username,
+            'PakePlus'
         )
     } catch {
         // ignore
@@ -485,14 +545,18 @@ async function loadReleases() {
 
 function runStatusType(status: string, conclusion: string | null): string {
     if (status === 'completed') {
-        return conclusion === 'success' ? 'success' : 'danger'
+        if (conclusion === 'success') return 'success'
+        if (conclusion === 'cancelled') return 'info'
+        return 'danger'
     }
     return 'warning'
 }
 
 function runStatusText(status: string, conclusion: string | null): string {
     if (status === 'completed') {
-        return conclusion === 'success' ? '成功' : '失败'
+        if (conclusion === 'success') return '成功'
+        if (conclusion === 'cancelled') return '已取消'
+        return '失败'
     }
     if (status === 'in_progress') return '构建中'
     if (status === 'queued') return '排队中'
@@ -512,6 +576,60 @@ function formatSize(bytes: number): string {
 
 function openRunUrl(url: string) {
     tauriApi.openUrl(url)
+}
+
+async function downloadArtifact(artifact: GitHubArtifact) {
+    const token = settingsStore.githubToken
+    const downloadUrl = artifact.archive_download_url
+
+    if (!isTauriEnv) {
+        // 浏览器环境：使用 fetch 下载
+        try {
+            const resp = await fetch(downloadUrl, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    Accept: 'application/vnd.github+json',
+                }
+            })
+            if (!resp.ok) throw new Error(`下载失败: ${resp.status}`)
+            const blob = await resp.blob()
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `${artifact.name}.zip`
+            a.click()
+            URL.revokeObjectURL(url)
+            ElMessage.success('下载完成: ' + artifact.name)
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            ElMessage.error('下载失败: ' + msg)
+        }
+        return
+    }
+
+    // Tauri 环境：先通过 fetch 获取 blob，再保存
+    try {
+        const savePath = await saveDialog({ defaultPath: `${artifact.name}.zip` })
+        if (!savePath) return
+
+        // 使用 Tauri HTTP 插件下载
+        const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http')
+        const resp = await tauriFetch(downloadUrl, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: 'application/vnd.github+json',
+            }
+        })
+        if (!resp.ok) throw new Error(`下载失败: ${resp.status}`)
+
+        const arrayBuffer = await resp.arrayBuffer()
+        const { writeBinaryFile } = await import('@tauri-apps/plugin-fs')
+        await writeBinaryFile(savePath as string, arrayBuffer)
+        ElMessage.success('下载完成: ' + artifact.name)
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        ElMessage.error('下载失败: ' + msg)
+    }
 }
 
 async function downloadAsset(asset: ReleaseAsset) {
