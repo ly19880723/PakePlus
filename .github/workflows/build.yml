@@ -86,7 +86,7 @@ jobs:
                 }
                 Write-Host "Applied config: $name"
               shell: pwsh
-            - run: pnpm tauri build --debug
+            - run: cargo build --debug
               shell: pwsh
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
@@ -110,7 +110,7 @@ jobs:
             - run: Remove-Item -Recurse -Force ./dist -ErrorAction SilentlyContinue
               shell: pwsh
             - run: pnpm build
-            - run: pnpm tauri build --debug --target aarch64-pc-windows-msvc
+            - run: cargo build --debug --target aarch64-pc-windows-msvc
               shell: pwsh
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
@@ -134,13 +134,12 @@ jobs:
             - run: pnpm install
             - run: rm -rf ./dist
             - run: pnpm build
-            - run: pnpm tauri build --debug --target aarch64-apple-darwin
+            - run: cargo build --debug --target aarch64-apple-darwin
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-macos-aarch64
                   path: |
-                      src-tauri/target/debug/*.app
                       src-tauri/target/debug/PakePlus
 
     build_macos_x86_64:
@@ -158,13 +157,12 @@ jobs:
             - run: pnpm install
             - run: rm -rf ./dist
             - run: pnpm build
-            - run: pnpm tauri build --debug --target x86_64-apple-darwin
+            - run: cargo build --debug --target x86_64-apple-darwin
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
               with:
                   name: pakeplus-macos-x86_64
                   path: |
-                      src-tauri/target/debug/*.app
                       src-tauri/target/debug/PakePlus
 
     build_linux_x86_64:
@@ -184,7 +182,7 @@ jobs:
                   sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
             - run: rm -rf ./dist
             - run: pnpm build
-            - run: pnpm tauri build --debug
+            - run: cargo build --debug
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
               with:
@@ -210,7 +208,7 @@ jobs:
             - run: rustup target add aarch64-unknown-linux-gnu
             - run: rm -rf ./dist
             - run: pnpm build
-            - run: pnpm tauri build --debug --target aarch64-unknown-linux-gnu
+            - run: cargo build --debug --target aarch64-unknown-linux-gnu
               working-directory: src-tauri
             - uses: actions/upload-artifact@v4
               with:
