@@ -43,7 +43,7 @@ jobs:
             - uses: actions/setup-node@v4
               with:
                   node-version: 22
-            - run: corepack enable
+            - run: npm install -g pnpm
             - uses: dtolnay/rust-toolchain@stable
             - run: pnpm install
             - run: Remove-Item -Recurse -Force ./dist -ErrorAction SilentlyContinue
@@ -104,7 +104,7 @@ jobs:
             - uses: actions/setup-node@v4
               with:
                   node-version: 22
-            - run: corepack enable
+            - run: npm install -g pnpm
             - uses: dtolnay/rust-toolchain@stable
             - run: pnpm install
             - run: rustup target add aarch64-pc-windows-msvc
@@ -129,7 +129,7 @@ jobs:
             - uses: actions/setup-node@v4
               with:
                   node-version: 22
-            - run: corepack enable
+            - run: npm install -g pnpm
             - uses: dtolnay/rust-toolchain@stable
               with:
                   targets: aarch64-apple-darwin
@@ -153,7 +153,7 @@ jobs:
             - uses: actions/setup-node@v4
               with:
                   node-version: 22
-            - run: corepack enable
+            - run: npm install -g pnpm
             - uses: dtolnay/rust-toolchain@stable
               with:
                   targets: x86_64-apple-darwin
@@ -177,7 +177,7 @@ jobs:
             - uses: actions/setup-node@v4
               with:
                   node-version: 22
-            - run: corepack enable
+            - run: npm install -g pnpm
             - uses: dtolnay/rust-toolchain@stable
             - run: pnpm install
             - name: Install deps
@@ -203,7 +203,7 @@ jobs:
             - uses: actions/setup-node@v4
               with:
                   node-version: 22
-            - run: corepack enable
+            - run: npm install -g pnpm
             - uses: dtolnay/rust-toolchain@stable
             - run: pnpm install
             - name: Install deps
