@@ -9,12 +9,6 @@
         "beforeDevCommand": "pnpm dev",
         "beforeBuildCommand": "pnpm build"
     },
-    "bundle": {
-        "active": false,
-        "resources": [
-            "data/**"
-        ]
-    },
     "app": {
         "security": {
             "assetProtocol": {

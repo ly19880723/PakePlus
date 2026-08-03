@@ -72,7 +72,6 @@ jobs:
                     $tc = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
                     $tc.productName = $name
                     $tc.identifier = if ($cfg -and $cfg.appid) { $cfg.appid } else { "com.pakeplus.app" }
-                    $tc.bundle.active = $false
                     $tc | ConvertTo-Json -Depth 10 | Set-Content "src-tauri/tauri.conf.json"
                 }
                 if (Test-Path "src-tauri/data/man.json") {
